@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ECG Monitor — Standalone Dashboard</title>
+<style>
+  :root {
+    --bg: #0a0e12; --panel: #10161c; --line: #1e2830; --ink: #d7e2ea; --dim: #6c7f8e;
+    --trace: #35d07f; --amber: #e8a53d; --red: #e8543d; --blue: #4f9dde;
+    --mono: 'SF Mono', 'Cascadia Code', Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; align-items: center; padding: 24px 16px 40px;
+  }
+  header { width: 100%; max-width: 760px; margin-bottom: 4px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; color: var(--dim);
+    text-transform: uppercase; margin: 0 0 6px;
+  }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 16px; color: var(--ink); }
+
+  .mode-switch {
+    width: 100%; max-width: 760px; display: flex; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; padding: 4px; margin-bottom: 16px;
+  }
+  .mode-switch button {
+    flex: 1; background: transparent; border: none; color: var(--dim);
+    font-family: var(--mono); font-size: 12.5px; padding: 10px; border-radius: 7px;
+    cursor: pointer; transition: background 0.15s, color 0.15s;
+  }
+  .mode-switch button.active { background: #16202a; color: var(--ink); }
+
+  .panel {
+    width: 100%; max-width: 760px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; overflow: hidden;
+  }
+  .panel-head {
+    display: flex; justify-content: space-between; align-items: center; padding: 10px 14px;
+    border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 11px;
+    color: var(--dim); letter-spacing: 0.04em;
+  }
+  .rec-dot {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--trace);
+    display: inline-block; margin-right: 6px; animation: pulse 1.4s infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+  canvas { display: block; width: 100%; height: 200px; }
+
+  .stats { display: flex; gap: 12px; width: 100%; max-width: 760px; margin-top: 12px; }
+  .card {
+    flex: 1; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px; text-align: center;
+  }
+  .card .label { font-family: var(--mono); font-size: 10.5px; color: var(--dim); letter-spacing: 0.1em; text-transform: uppercase; }
+  .card .value { font-family: var(--mono); font-size: 34px; font-weight: 600; margin-top: 6px; letter-spacing: -0.02em; }
+  #bpm-value { color: var(--trace); }
+  #status-value.normal { color: var(--trace); }
+  #status-value.bradycardia { color: var(--blue); }
+  #status-value.tachycardia { color: var(--red); }
+  #status-value.lead-off { color: var(--amber); }
+  .unit { font-size: 13px; color: var(--dim); font-weight: 400; }
+  .range-hint {
+    font-family: var(--mono); font-size: 10px; color: var(--dim); margin-top: 10px;
+    text-align: center; letter-spacing: 0.02em;
+  }
+  #raw-value { color: var(--ink); }
+
+  .log-panel {
+    width: 100%; max-width: 760px; margin-top: 16px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+  }
+  .log-head {
+    display: flex; justify-content: space-between; align-items: center; padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .log-head .label {
+    font-family: var(--mono); font-size: 10.5px; color: var(--dim); letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .log-head button {
+    font-family: var(--mono); font-size: 11.5px; color: var(--ink); background: #16202a;
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer;
+  }
+  .log-head button:hover { border-color: var(--dim); }
+  .log-head button:disabled { opacity: 0.35; cursor: not-allowed; }
+  .log-table-wrap { max-height: 260px; overflow-y: auto; }
+  table.log-table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+  table.log-table th {
+    position: sticky; top: 0; background: #0d1218; text-align: left; padding: 8px 14px;
+    color: var(--dim); font-weight: 500; border-bottom: 1px solid var(--line); font-size: 10.5px;
+    letter-spacing: 0.05em; text-transform: uppercase;
+  }
+  table.log-table td { padding: 6px 14px; border-bottom: 1px solid #161d24; color: var(--ink); }
+  table.log-table tr:first-child td { color: var(--trace); }
+  .status-cell.bradycardia { color: var(--blue); }
+  .status-cell.tachycardia { color: var(--red); }
+  .status-cell.lead-off { color: var(--amber); }
+  .status-cell.normal { color: var(--trace); }
+  .log-empty { padding: 20px; text-align: center; color: var(--dim); font-family: var(--mono); font-size: 12px; }
+
+  .controls {
+    width: 100%; max-width: 760px; margin-top: 16px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; padding: 14px;
+  }
+  .controls .label {
+    font-family: var(--mono); font-size: 10.5px; color: var(--dim); letter-spacing: 0.1em;
+    text-transform: uppercase; margin-bottom: 10px;
+  }
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  button.opt {
+    font-family: var(--mono); font-size: 12.5px; color: var(--ink); background: #16202a;
+    border: 1px solid var(--line); border-radius: 6px; padding: 9px 14px; cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  button.opt:hover { border-color: var(--dim); }
+  button.opt.active { border-color: var(--trace); color: var(--trace); background: #0f1f16; }
+  button.opt.active.bradycardia { border-color: var(--blue); color: var(--blue); background: #0e1a24; }
+  button.opt.active.tachycardia { border-color: var(--red); color: var(--red); background: #24120f; }
+  button.opt.active.lead-off { border-color: var(--amber); color: var(--amber); background: #241a0c; }
+  button.opt:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  .upload-zone {
+    border: 1.5px dashed var(--line); border-radius: 8px; padding: 22px; text-align: center;
+    font-family: var(--mono); font-size: 12.5px; color: var(--dim); cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .upload-zone:hover, .upload-zone.drag { border-color: var(--blue); color: var(--ink); }
+  .upload-zone input { display: none; }
+  .file-info {
+    font-family: var(--mono); font-size: 12px; color: var(--trace); margin-top: 10px;
+    display: none;
+  }
+  .file-info.show { display: block; }
+  .playback-row { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  .playback-row input[type="range"] { flex: 1; min-width: 120px; }
+  .speed-label { font-family: var(--mono); font-size: 11px; color: var(--dim); min-width: 60px; }
+
+  footer {
+    width: 100%; max-width: 760px; margin-top: 18px; font-family: var(--mono);
+    font-size: 11px; color: var(--dim); line-height: 1.6;
+  }
+  .format-hint {
+    font-family: var(--mono); font-size: 11px; color: var(--dim); margin-top: 10px; line-height: 1.6;
+  }
+  .format-hint code { color: var(--blue); }
+</style>
+</head>
+<body>
+
+  <header>
+    <p class="eyebrow">Portable ECG Monitor</p>
+    <h1>Standalone Dashboard</h1>
+  </header>
+
+  <div class="mode-switch">
+    <button id="tab-sim" class="active">Simulated Data</button>
+    <button id="tab-upload">Uploaded Data (CSV)</button>
+    <button id="tab-live">Live from ECG Monitor</button>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <span><span class="rec-dot"></span><span id="source-label">SIMULATED &middot; 250 Hz</span></span>
+      <span id="clock">00:00:00</span>
+    </div>
+    <canvas id="wave"></canvas>
+  </div>
+
+  <div class="stats">
+    <div class="card">
+      <div class="label">Heart Rate</div>
+      <div class="value"><span id="bpm-value">--</span><span class="unit"> bpm</span></div>
+    </div>
+    <div class="card">
+      <div class="label">Rhythm Status</div>
+      <div class="value" id="status-value">--</div>
+    </div>
+    <div class="card">
+      <div class="label">Raw ECG Value</div>
+      <div class="value"><span id="raw-value">--</span><span class="unit"> /4095</span></div>
+    </div>
+  </div>
+  <div class="range-hint">&lt; 60 bpm = Bradycardia &middot; 60–100 bpm = Normal &middot; &gt; 100 bpm = Tachycardia</div>
+
+  <!-- Simulated mode controls -->
+  <div class="controls" id="sim-controls">
+    <div class="label">Simulate condition</div>
+    <div class="btn-row">
+      <button class="opt active" id="btn-normal">Normal</button>
+      <button class="opt" id="btn-brady">Bradycardia</button>
+      <button class="opt" id="btn-tachy">Tachycardia</button>
+      <button class="opt" id="btn-lead-off">Lead off</button>
+    </div>
+  </div>
+
+  <!-- Live mode controls -->
+  <div class="controls" id="live-controls" style="display:none;">
+    <div class="label">Connect to device</div>
+    <div class="playback-row" style="margin-top:0;">
+      <input type="text" id="live-address" placeholder="192.168.4.1" value="192.168.4.1"
+        style="flex:1; min-width:140px; background:#0d1218; border:1px solid var(--line); border-radius:6px; color:var(--ink); font-family:var(--mono); font-size:12.5px; padding:9px 12px;">
+      <button class="opt" id="btn-live-connect">Connect</button>
+    </div>
+    <div class="format-hint" id="live-status">
+      Enter your ECG Monitor's Wi-Fi IP address (default <code>192.168.4.1</code> if
+      connected directly to its access point) and click Connect. This requires your
+      device to be on the same network as the ECG Monitor, and works best when this
+      page is opened without HTTPS restrictions — a secure (https) page like this one's
+      GitHub Pages link will usually block the connection for security reasons, since
+      the ECG Monitor serves plain, unencrypted data. If that happens here, this same
+      page opened as a local file, or the ECG Monitor's own built-in dashboard, will
+      connect successfully.
+    </div>
+  </div>
+
+  <!-- Upload mode controls -->
+  <div class="controls" id="upload-controls" style="display:none;">
+    <div class="label">Load recorded data</div>
+    <div class="upload-zone" id="drop-zone">
+      Click to choose a CSV file, or drag one here
+      <input type="file" id="file-input" accept=".csv,.txt">
+    </div>
+    <div class="file-info" id="file-info"></div>
+    <div class="format-hint">
+      Accepted formats — one value per line: <code>2731</code> (raw ECG only,
+      BPM computed automatically and classified) &nbsp;or&nbsp;
+      <code>ecg,bpm,status</code> per line with optional header row.
+      If <code>status</code> is omitted, it is derived automatically from BPM.
+    </div>
+    <div class="playback-row">
+      <button class="opt" id="btn-play" disabled>▶ Play</button>
+      <button class="opt" id="btn-restart" disabled>⟲ Restart</button>
+      <span class="speed-label">Speed: <span id="speed-val">1.0x</span></span>
+      <input type="range" id="speed-slider" min="0.25" max="4" step="0.25" value="1" disabled>
+    </div>
+  </div>
+
+  <div class="log-panel">
+    <div class="log-head">
+      <span class="label">Raw Value Log</span>
+      <button id="btn-export" disabled>⬇ Export CSV</button>
+    </div>
+    <div class="log-table-wrap">
+      <table class="log-table">
+        <thead>
+          <tr><th>Time</th><th>Raw ECG</th><th>BPM</th><th>Status</th></tr>
+        </thead>
+        <tbody id="log-body"></tbody>
+      </table>
+      <div class="log-empty" id="log-empty">No samples logged yet.</div>
+    </div>
+  </div>
+
+  <footer>
+    The log above records one entry every 500ms (matching the original LCD
+    refresh interval) — up to the last 200 entries — and can be exported as CSV.
+  </footer>
+
+<script>
+  // ============================================================
+  // Shared BPM classification (Bradycardia / Normal / Tachycardia)
+  // ============================================================
+  function classifyBpm(bpm) {
+    if (!bpm || bpm <= 0) return null;
+    if (bpm < 60) return 'Bradycardia';
+    if (bpm > 100) return 'Tachycardia';
+    return 'Normal';
+  }
+  function statusToClass(status) {
+    if (!status) return '';
+    const s = status.toLowerCase();
+    if (s.includes('brady')) return 'bradycardia';
+    if (s.includes('tachy')) return 'tachycardia';
+    if (s.includes('lead')) return 'lead-off';
+    return 'normal';
+  }
+  function statusToColor(status) {
+    const cls = statusToClass(status);
+    if (cls === 'bradycardia') return '#4f9dde';
+    if (cls === 'tachycardia') return '#e8543d';
+    if (cls === 'lead-off') return '#e8a53d';
+    return '#35d07f';
+  }
+
+  // ============================================================
+  // Shared canvas + display
+  // ============================================================
+  const canvas = document.getElementById('wave');
+  const ctx = canvas.getContext('2d');
+  const bpmEl = document.getElementById('bpm-value');
+  const statusEl = document.getElementById('status-value');
+  const clockEl = document.getElementById('clock');
+  const sourceLabel = document.getElementById('source-label');
+
+  function resizeCanvas() {
+    canvas.width = canvas.clientWidth * devicePixelRatio;
+    canvas.height = canvas.clientHeight * devicePixelRatio;
+  }
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
+
+  const MAX_POINTS = 400;
+  let samples = new Array(MAX_POINTS).fill(0.08);
+  let traceColor = '#35d07f';
+
+  function drawWave() {
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+    ctx.lineWidth = 1;
+    for (let gx = 0; gx < w; gx += w / 20) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, h); ctx.stroke(); }
+    for (let gy = 0; gy < h; gy += h / 8) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke(); }
+
+    ctx.strokeStyle = traceColor;
+    ctx.lineWidth = 2 * devicePixelRatio;
+    ctx.beginPath();
+    const stepX = w / (MAX_POINTS - 1);
+    for (let i = 0; i < MAX_POINTS; i++) {
+      const y = h - (samples[i] * h * 0.85) - h * 0.08;
+      const x = i * stepX;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    requestAnimationFrame(drawWave);
+  }
+  requestAnimationFrame(drawWave);
+
+  const startTime = Date.now();
+  setInterval(() => {
+    const s = Math.floor((Date.now() - startTime) / 1000);
+    const hh = String(Math.floor(s / 3600)).padStart(2, '0');
+    const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+    const ss = String(s % 60).padStart(2, '0');
+    clockEl.textContent = `${hh}:${mm}:${ss}`;
+  }, 1000);
+
+  function setStatusDisplay(label, cls) {
+    statusEl.textContent = label;
+    statusEl.className = cls;
+  }
+
+  // ============================================================
+  // Raw value display + log (shared by both modes)
+  // ============================================================
+  const rawValueEl = document.getElementById('raw-value');
+  const logBody = document.getElementById('log-body');
+  const logEmpty = document.getElementById('log-empty');
+  const btnExport = document.getElementById('btn-export');
+
+  const MAX_LOG_ROWS = 200;
+  const LOG_INTERVAL_MS = 500; // matches original sketch's lcdUpdateInterval
+  let logEntries = []; // {time, raw, bpm, status} — index 0 = most recent
+  let lastLogTime = 0;
+
+  function updateRawValue(raw) {
+    rawValueEl.textContent = Math.round(raw);
+  }
+
+  function recordLogEntry(raw, bpm, status) {
+    const now = Date.now();
+    if (now - lastLogTime < LOG_INTERVAL_MS) return;
+    lastLogTime = now;
+
+    const entry = {
+      time: new Date(now).toLocaleTimeString(),
+      raw: Math.round(raw),
+      bpm: bpm || '--',
+      status: status || '--'
+    };
+    logEntries.unshift(entry);
+    if (logEntries.length > MAX_LOG_ROWS) logEntries.pop();
+
+    const row = document.createElement('tr');
+    const cls = statusToClass(status);
+    row.innerHTML = `<td>${entry.time}</td><td>${entry.raw}</td><td>${entry.bpm}</td><td class="status-cell ${cls}">${entry.status}</td>`;
+    logBody.insertBefore(row, logBody.firstChild);
+    while (logBody.children.length > MAX_LOG_ROWS) logBody.removeChild(logBody.lastChild);
+
+    logEmpty.style.display = 'none';
+    btnExport.disabled = false;
+  }
+
+  function clearLog() {
+    logEntries = [];
+    logBody.innerHTML = '';
+    logEmpty.style.display = '';
+    btnExport.disabled = true;
+  }
+
+  btnExport.addEventListener('click', () => {
+    if (logEntries.length === 0) return;
+    const header = 'time,raw_ecg,bpm,status\n';
+    const rows = [...logEntries].reverse() // chronological order in the file
+      .map(e => `${e.time},${e.raw},${e.bpm},${e.status}`).join('\n');
+    const blob = new Blob([header + rows], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ecg_log_${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  // ============================================================
+  // MODE: Simulated
+  // ============================================================
+  function buildBeatTemplate(points) {
+    const t = new Array(points);
+    for (let i = 0; i < points; i++) {
+      const x = i / points;
+      let v = 0;
+      v += 0.06 * gauss(x, 0.14, 0.02);
+      v -= 0.10 * gauss(x, 0.24, 0.008);
+      v += 1.00 * gauss(x, 0.27, 0.010);
+      v -= 0.25 * gauss(x, 0.30, 0.010);
+      v += 0.18 * gauss(x, 0.50, 0.035);
+      t[i] = v;
+    }
+    return t;
+  }
+  function gauss(x, mu, sigma) { return Math.exp(-((x - mu) ** 2) / (2 * sigma * sigma)); }
+  const BEAT = buildBeatTemplate(120);
+
+  // Each simulated condition maps to a representative BPM range
+  const SIM_BPM = { normal: 72, bradycardia: 45, tachycardia: 128, 'lead-off': 0 };
+  let simMode = 'normal';
+  let simBaseBpm = SIM_BPM.normal;
+  let simSamplesPerBeat = 62;
+  let simStepAccum = 0;
+
+  function simRecalcTiming() { simSamplesPerBeat = Math.round((60 / simBaseBpm) * 50); }
+  simRecalcTiming();
+
+  let simCurrentRaw = 0;
+  function simNextSample() {
+    let norm;
+    if (simMode === 'lead-off') {
+      norm = 0.08 + (Math.random() - 0.5) * 0.15;
+    } else {
+      simStepAccum += 120 / simSamplesPerBeat;
+      if (simStepAccum >= 120) simStepAccum -= 120;
+      const idx = Math.floor(simStepAccum) % 120;
+      const noise = (Math.random() - 0.5) * 0.02;
+      norm = BEAT[idx] * 0.85 + 0.08 + noise;
+    }
+    simCurrentRaw = Math.max(0, Math.min(1, norm)) * 4095; // scale to 12-bit ADC range
+    return norm;
+  }
+
+  let simInterval = null, simStatsInterval = null, simLogInterval = null;
+  let simCurrentBpm = 0, simCurrentStatus = 'Normal';
+  function startSimulation() {
+    stopUploadPlayback();
+    sourceLabel.textContent = 'SIMULATED · 250 Hz';
+    simInterval = setInterval(() => {
+      samples.shift(); samples.push(simNextSample());
+      updateRawValue(simCurrentRaw);
+    }, 20);
+    simStatsInterval = setInterval(() => {
+      if (simMode === 'lead-off') {
+        bpmEl.textContent = '--';
+        setStatusDisplay('Lead Off', 'lead-off');
+        traceColor = '#e8a53d';
+        simCurrentBpm = 0; simCurrentStatus = 'Lead Off';
+      } else {
+        const jitter = simMode === 'normal' ? (Math.random() * 2 - 1) : (Math.random() * 4 - 2);
+        const displayBpm = Math.round(simBaseBpm + jitter);
+        bpmEl.textContent = displayBpm;
+        const status = classifyBpm(displayBpm) || 'Normal';
+        setStatusDisplay(status, statusToClass(status));
+        traceColor = statusToColor(status);
+        simCurrentBpm = displayBpm; simCurrentStatus = status;
+      }
+    }, 800);
+    simLogInterval = setInterval(() => {
+      recordLogEntry(simCurrentRaw, simCurrentBpm, simCurrentStatus);
+    }, LOG_INTERVAL_MS);
+  }
+  function stopSimulation() {
+    clearInterval(simInterval); clearInterval(simStatsInterval); clearInterval(simLogInterval);
+    simInterval = null; simStatsInterval = null; simLogInterval = null;
+  }
+
+  function setSimMode(mode, btn) {
+    simMode = mode;
+    simBaseBpm = SIM_BPM[mode] || 72;
+    if (mode !== 'lead-off') simRecalcTiming();
+    document.querySelectorAll('#sim-controls .opt').forEach(b => b.classList.remove('active', 'bradycardia', 'tachycardia', 'lead-off'));
+    btn.classList.add('active');
+    if (mode !== 'normal') btn.classList.add(mode);
+  }
+  document.getElementById('btn-normal').addEventListener('click', e => setSimMode('normal', e.target));
+  document.getElementById('btn-brady').addEventListener('click', e => setSimMode('bradycardia', e.target));
+  document.getElementById('btn-tachy').addEventListener('click', e => setSimMode('tachycardia', e.target));
+  document.getElementById('btn-lead-off').addEventListener('click', e => setSimMode('lead-off', e.target));
+
+  // ============================================================
+  // MODE: Uploaded data (CSV replay)
+  // ============================================================
+  let uploadedRows = [];
+  let uploadCursor = 0;
+  let uploadPlaying = false;
+  let uploadTimer = null;
+  let uploadSpeed = 1.0;
+  let ecgMin = 0, ecgMax = 4095;
+
+  const dropZone = document.getElementById('drop-zone');
+  const fileInput = document.getElementById('file-input');
+  const fileInfo = document.getElementById('file-info');
+  const btnPlay = document.getElementById('btn-play');
+  const btnRestart = document.getElementById('btn-restart');
+  const speedSlider = document.getElementById('speed-slider');
+  const speedVal = document.getElementById('speed-val');
+
+  dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault(); dropZone.classList.remove('drag');
+    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', e => { if (e.target.files.length) handleFile(e.target.files[0]); });
+
+  function handleFile(file) {
+    const reader = new FileReader();
+    reader.onload = () => parseCSV(reader.result, file.name);
+    reader.onerror = () => { fileInfo.textContent = 'Could not read file.'; fileInfo.classList.add('show'); };
+    reader.readAsText(file);
+  }
+
+  function parseCSV(text, filename) {
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+    if (lines.length === 0) {
+      fileInfo.textContent = 'File appears to be empty.'; fileInfo.classList.add('show'); return;
+    }
+
+    let startIdx = 0;
+    const firstCols = lines[0].split(',');
+    if (isNaN(parseFloat(firstCols[0]))) startIdx = 1;
+
+    const rows = [];
+    for (let i = startIdx; i < lines.length; i++) {
+      const cols = lines[i].split(',').map(c => c.trim());
+      const ecg = parseFloat(cols[0]);
+      if (isNaN(ecg)) continue;
+      const bpm = cols.length > 1 && !isNaN(parseFloat(cols[1])) ? parseFloat(cols[1]) : null;
+      const status = cols.length > 2 && cols[2] ? cols[2] : null;
+      rows.push({ ecg, bpm, status });
+    }
+
+    if (rows.length === 0) {
+      fileInfo.textContent = 'No numeric ECG values found in this file.';
+      fileInfo.classList.add('show'); return;
+    }
+
+    const hasBpmColumn = rows.some(r => r.bpm !== null);
+    if (!hasBpmColumn) computeBpmFromPeaks(rows);
+
+    // Fill in status from BPM wherever it wasn't explicitly supplied
+    for (const r of rows) {
+      if (!r.status) r.status = classifyBpm(r.bpm) || 'Normal';
+    }
+
+    const vals = rows.map(r => r.ecg);
+    ecgMin = Math.min(...vals);
+    ecgMax = Math.max(...vals);
+    if (ecgMax === ecgMin) ecgMax = ecgMin + 1;
+
+    uploadedRows = rows;
+    uploadCursor = 0;
+    clearLog();
+    fileInfo.textContent = `Loaded "${filename}" — ${rows.length} samples` +
+      (hasBpmColumn ? ' (BPM from file)' : ' (BPM computed from peaks, classified automatically)');
+    fileInfo.classList.add('show');
+    btnPlay.disabled = false; btnRestart.disabled = false; speedSlider.disabled = false;
+    btnPlay.textContent = '▶ Play';
+  }
+
+  // Same threshold/refractory logic as the ESP32 sketch — adjust here if
+  // your sketch's beatThreshold / refractoryPeriod differ from these defaults.
+  function computeBpmFromPeaks(rows) {
+    const beatThreshold = 2500;
+    const refractoryPeriod = 250;       // ms
+    const assumedSampleIntervalMs = 50; // matches the original sketch's loop delay
+    let beatDetected = false, lastBeatIdx = -1, lastBpm = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const v = rows[i].ecg;
+      if (v > beatThreshold && !beatDetected) {
+        const nowMs = i * assumedSampleIntervalMs;
+        const lastMs = lastBeatIdx * assumedSampleIntervalMs;
+        if (lastBeatIdx === -1 || (nowMs - lastMs) > refractoryPeriod) {
+          if (lastBeatIdx !== -1) lastBpm = Math.round(60000 / (nowMs - lastMs));
+          lastBeatIdx = i;
+        }
+        beatDetected = true;
+      }
+      if (v < beatThreshold - 200) beatDetected = false;
+      rows[i].bpm = lastBpm || null;
+    }
+  }
+
+  function startUploadPlayback() {
+    stopSimulation();
+    sourceLabel.textContent = 'REPLAY · uploaded file';
+    uploadPlaying = true;
+    btnPlay.textContent = '⏸ Pause';
+    stepUpload();
+  }
+  function stepUpload() {
+    if (!uploadPlaying) return;
+    const row = uploadedRows[uploadCursor];
+    const norm = (row.ecg - ecgMin) / (ecgMax - ecgMin);
+    samples.shift(); samples.push(Math.max(0, Math.min(1, norm)));
+
+    if (row.bpm) bpmEl.textContent = row.bpm; else bpmEl.textContent = '--';
+    const status = row.status || 'Normal';
+    setStatusDisplay(status, statusToClass(status));
+    traceColor = statusToColor(status);
+    updateRawValue(row.ecg);
+    recordLogEntry(row.ecg, row.bpm, status);
+
+    uploadCursor++;
+    if (uploadCursor >= uploadedRows.length) uploadCursor = 0; // loop playback
+
+    const baseInterval = 20;
+    uploadTimer = setTimeout(stepUpload, baseInterval / uploadSpeed);
+  }
+  function stopUploadPlayback() {
+    uploadPlaying = false;
+    clearTimeout(uploadTimer);
+    if (btnPlay) btnPlay.textContent = '▶ Play';
+  }
+
+  btnPlay.addEventListener('click', () => {
+    if (uploadedRows.length === 0) return;
+    if (uploadPlaying) stopUploadPlayback(); else startUploadPlayback();
+  });
+  btnRestart.addEventListener('click', () => {
+    uploadCursor = 0;
+    if (!uploadPlaying) startUploadPlayback();
+  });
+  speedSlider.addEventListener('input', e => {
+    uploadSpeed = parseFloat(e.target.value);
+    speedVal.textContent = uploadSpeed.toFixed(2) + 'x';
+  });
+
+  // ============================================================
+  // MODE: Live from ECG Monitor
+  // ============================================================
+  const liveAddressInput = document.getElementById('live-address');
+  const btnLiveConnect = document.getElementById('btn-live-connect');
+  const liveStatusEl = document.getElementById('live-status');
+  let liveSocket = null;
+
+  function liveSetStatus(msg, isError) {
+    liveStatusEl.textContent = msg;
+    liveStatusEl.style.color = isError ? '#e8543d' : '';
+  }
+
+  function connectLive() {
+    if (liveSocket) { liveSocket.close(); liveSocket = null; }
+    const addr = liveAddressInput.value.trim() || '192.168.4.1';
+    liveSetStatus(`Connecting to ${addr}...`, false);
+    btnLiveConnect.textContent = 'Connecting...';
+    sourceLabel.textContent = `LIVE · connecting to ${addr}`;
+
+    let socket;
+    try {
+      socket = new WebSocket(`ws://${addr}/ws`);
+    } catch (e) {
+      liveSetStatus('Could not start connection — check the address and try again.', true);
+      btnLiveConnect.textContent = 'Connect';
+      return;
+    }
+    liveSocket = socket;
+
+    const connectTimeout = setTimeout(() => {
+      if (socket.readyState !== WebSocket.OPEN) {
+        socket.close();
+        liveSetStatus(
+          `Couldn't reach ${addr}. If this page is running over HTTPS (e.g. the ` +
+          `GitHub Pages link), your browser is likely blocking the connection for ` +
+          `security reasons, since the device only serves plain, unencrypted data. ` +
+          `Try opening this file locally, or use the ECG Monitor's own built-in ` +
+          `dashboard page instead.`, true);
+        btnLiveConnect.textContent = 'Connect';
+      }
+    }, 4000);
+
+    socket.onopen = () => {
+      clearTimeout(connectTimeout);
+      liveSetStatus(`Connected to ${addr}.`, false);
+      btnLiveConnect.textContent = 'Disconnect';
+      sourceLabel.textContent = `LIVE · ${addr}`;
+      clearLog();
+    };
+    socket.onmessage = (evt) => {
+      try {
+        const data = JSON.parse(evt.data);
+        if (typeof data.ecg === 'number') {
+          samples.shift(); samples.push(Math.max(0, Math.min(1, data.ecg / 4095)));
+          updateRawValue(data.ecg);
+        }
+        if (typeof data.bpm === 'number') bpmEl.textContent = data.bpm > 0 ? data.bpm : '--';
+        if (data.status) {
+          const cls = statusToClass(data.status);
+          setStatusDisplay(data.status, cls);
+          traceColor = statusToColor(data.status);
+        }
+        recordLogEntry(data.ecg, data.bpm, data.status);
+      } catch (e) { /* ignore malformed packet */ }
+    };
+    socket.onerror = () => { /* onclose below handles user-facing messaging */ };
+    socket.onclose = () => {
+      clearTimeout(connectTimeout);
+      if (btnLiveConnect.textContent === 'Disconnect') {
+        liveSetStatus('Disconnected.', false);
+        sourceLabel.textContent = 'LIVE · disconnected';
+      }
+      btnLiveConnect.textContent = 'Connect';
+      liveSocket = null;
+    };
+  }
+
+  btnLiveConnect.addEventListener('click', () => {
+    if (liveSocket && liveSocket.readyState === WebSocket.OPEN) {
+      liveSocket.close();
+      btnLiveConnect.textContent = 'Connect';
+      liveSetStatus('Disconnected.', false);
+    } else {
+      connectLive();
+    }
+  });
+
+  // ============================================================
+  // Tab switching
+  // ============================================================
+  const tabSim = document.getElementById('tab-sim');
+  const tabUpload = document.getElementById('tab-upload');
+  const tabLive = document.getElementById('tab-live');
+  const simControls = document.getElementById('sim-controls');
+  const uploadControls = document.getElementById('upload-controls');
+  const liveControls = document.getElementById('live-controls');
+
+  function deactivateAllTabs() {
+    tabSim.classList.remove('active'); tabUpload.classList.remove('active'); tabLive.classList.remove('active');
+    simControls.style.display = 'none'; uploadControls.style.display = 'none'; liveControls.style.display = 'none';
+  }
+
+  tabSim.addEventListener('click', () => {
+    deactivateAllTabs();
+    tabSim.classList.add('active'); simControls.style.display = '';
+    if (liveSocket) { liveSocket.close(); liveSocket = null; }
+    stopUploadPlayback();
+    clearLog();
+    startSimulation();
+  });
+  tabUpload.addEventListener('click', () => {
+    deactivateAllTabs();
+    tabUpload.classList.add('active'); uploadControls.style.display = '';
+    if (liveSocket) { liveSocket.close(); liveSocket = null; }
+    stopSimulation();
+    sourceLabel.textContent = uploadedRows.length ? 'REPLAY · uploaded file (paused)' : 'REPLAY · no file loaded';
+    bpmEl.textContent = '--';
+    setStatusDisplay('--', '');
+  });
+  tabLive.addEventListener('click', () => {
+    deactivateAllTabs();
+    tabLive.classList.add('active'); liveControls.style.display = '';
+    stopSimulation();
+    stopUploadPlayback();
+    clearLog();
+    sourceLabel.textContent = 'LIVE · not connected';
+    bpmEl.textContent = '--';
+    setStatusDisplay('--', '');
+  });
+
+  startSimulation();
+</script>
+</body>
+</html>
